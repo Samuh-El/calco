@@ -1,53 +1,42 @@
 package com.example.calco
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.graphics.Matrix
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.view.GestureDetector
-import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.*
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.core.content.ContextCompat
 import com.example.calco.databinding.ActivityMainBinding
+import com.example.calco.util.CameraManager
+import com.example.calco.util.GestureManager
+import com.example.calco.util.PermissionManager
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraExecutor: ExecutorService
-
-    private var camera: Camera? = null
-    private var cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-    private var isFlashOn = false
-
-    private val imageMatrix = Matrix()
-    private lateinit var scaleDetector: ScaleGestureDetector
-    private lateinit var gestureDetector: GestureDetector
+    
+    private lateinit var permissionManager: PermissionManager
+    private lateinit var cameraManager: CameraManager
+    private lateinit var gestureManager: GestureManager
 
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let {
             binding.overlayImage.setImageURI(it)
             binding.overlayImage.visibility = View.VISIBLE
             binding.transparencySlider.visibility = View.VISIBLE
-            resetImageMatrix()
+            gestureManager.resetMatrix()
         }
     }
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        if (permissions[Manifest.permission.CAMERA] == true) {
-            startCamera()
+    ) { _ ->
+        if (permissionManager.allPermissionsGranted()) {
+            cameraManager.startCamera()
         } else {
-            Toast.makeText(this, "Se requieren permisos de cámara para funcionar", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.camera_permission_required), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -56,16 +45,21 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        cameraExecutor = Executors.newSingleThreadExecutor()
-
-        if (allPermissionsGranted()) {
-            startCamera()
-        } else {
-            requestPermissions()
-        }
-
+        initManagers()
         setupUI()
-        setupGestures()
+
+        if (permissionManager.allPermissionsGranted()) {
+            cameraManager.startCamera()
+        } else {
+            permissionManager.requestPermissions(requestPermissionLauncher)
+        }
+    }
+
+    private fun initManagers() {
+        cameraExecutor = Executors.newSingleThreadExecutor()
+        permissionManager = PermissionManager(this)
+        cameraManager = CameraManager(this, this, binding.viewFinder)
+        gestureManager = GestureManager(this, binding.overlayImage)
     }
 
     private fun setupUI() {
@@ -74,16 +68,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnFlip.setOnClickListener {
-            cameraSelector = if (cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
-                CameraSelector.DEFAULT_FRONT_CAMERA
-            } else {
-                CameraSelector.DEFAULT_BACK_CAMERA
-            }
-            startCamera()
+            cameraManager.flipCamera()
         }
 
         binding.btnFlash.setOnClickListener {
-            toggleFlash()
+            cameraManager.toggleFlash()
         }
 
         binding.transparencySlider.addOnChangeListener { _, value, _ ->
@@ -103,93 +92,8 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun setupGestures() {
-        scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                imageMatrix.postScale(detector.scaleFactor, detector.scaleFactor, detector.focusX, detector.focusY)
-                binding.overlayImage.imageMatrix = imageMatrix
-                return true
-            }
-        })
-
-        gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-                imageMatrix.postTranslate(-distanceX, -distanceY)
-                binding.overlayImage.imageMatrix = imageMatrix
-                return true
-            }
-        })
-
-        binding.overlayImage.setOnTouchListener { _, event ->
-            scaleDetector.onTouchEvent(event)
-            gestureDetector.onTouchEvent(event)
-            true
-        }
-    }
-
-    private fun resetImageMatrix() {
-        imageMatrix.reset()
-        binding.overlayImage.imageMatrix = imageMatrix
-    }
-
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-
-        cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    it.setSurfaceProvider(binding.viewFinder.surfaceProvider)
-                }
-
-            try {
-                cameraProvider.unbindAll()
-                camera = cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview
-                )
-            } catch (exc: Exception) {
-                Toast.makeText(this, "Error al iniciar la cámara: ${exc.message}", Toast.LENGTH_SHORT).show()
-            }
-
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    private fun toggleFlash() {
-        if (camera?.cameraInfo?.hasFlashUnit() == true) {
-            isFlashOn = !isFlashOn
-            camera?.cameraControl?.enableTorch(isFlashOn)
-        } else {
-            Toast.makeText(this, "La linterna no está disponible", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
-        ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun requestPermissions() {
-        requestPermissionLauncher.launch(REQUIRED_PERMISSIONS)
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
-    }
-
-    companion object {
-        private val REQUIRED_PERMISSIONS = mutableListOf(
-            Manifest.permission.CAMERA
-        ).apply {
-            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-                add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.READ_MEDIA_IMAGES)
-            } else {
-                add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
-        }.toTypedArray()
     }
 }

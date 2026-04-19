@@ -12,5 +12,6 @@ layout activity_main
 string about_content
 string about_title
 string app_name
+string camera_permission_required
 string ok
 style Theme.Calco
