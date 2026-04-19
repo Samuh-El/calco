@@ -1,0 +1,17 @@
+R_DEF: Internal format may change without notice
+local
+drawable ic_launcher_foreground
+id btnFlash
+id btnFlip
+id btnGallery
+id btnInfo
+id overlayImage
+id transparencySlider
+id viewFinder
+layout activity_main
+string about_content
+string about_title
+string app_name
+string camera_permission_required
+string ok
+style Theme.Calco
